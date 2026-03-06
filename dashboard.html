@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Monitor Sísmico — Tiempo Real</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #050709;
+  --panel:     #0b0e14;
+  --border:    #141820;
+  --border2:   #1e2533;
+  --green:     #00ff88;
+  --green-dim: rgba(0,255,136,.12);
+  --yellow:    #ffc940;
+  --orange:    #ff7b2b;
+  --red:       #ff2b4a;
+  --blue:      #4db8ff;
+  --purple:    #a855f7;
+  --text:      #c8d0e0;
+  --muted:     #3a4455;
+  --mono:      'Share Tech Mono', monospace;
+  --sans:      'Barlow', sans-serif;
+
+  /* Canales */
+  --cx: #4db8ff;
+  --cy: #00ff88;
+  --cz: #ffc940;
+  --cm: #ff7b2b;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Scanlines */
+body::after {
+  content:'';
+  position:fixed; inset:0; pointer-events:none; z-index:999;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.08) 2px, rgba(0,0,0,.08) 4px);
+}
+
+/* ── TOP BAR ──────────────────────────────────────────────────────────────── */
+#topbar {
+  flex-shrink: 0;
+  display: flex; align-items: center;
+  padding: 0 20px;
+  height: 52px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border2);
+  gap: 24px;
+}
+.tb-title {
+  font-family: var(--sans); font-weight: 900;
+  font-size: 16px; letter-spacing: 2px; text-transform: uppercase;
+  color: #fff;
+}
+.tb-title span { color: var(--green); }
+
+.tb-badge {
+  font-size: 10px; font-weight: 700;
+  padding: 3px 10px; border-radius: 3px;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  transition: all .3s;
+}
+.badge-normal    { background: rgba(0,255,136,.1);  color: var(--green);  border:1px solid rgba(0,255,136,.3); }
+.badge-precaucion{ background: rgba(255,201,64,.1); color: var(--yellow); border:1px solid rgba(255,201,64,.3); }
+.badge-peligro   { background: rgba(255,123,43,.1); color: var(--orange); border:1px solid rgba(255,123,43,.3); }
+.badge-critico   { background: rgba(255,43,74,.2);  color: var(--red);    border:1px solid rgba(255,43,74,.5);
+                   animation: critico-pulse .5s ease-in-out infinite alternate; }
+@keyframes critico-pulse { to { box-shadow: 0 0 20px rgba(255,43,74,.6); } }
+
+.tb-sep { width:1px; height:24px; background:var(--border2); }
+.tb-stat { display:flex; flex-direction:column; gap:1px; }
+.tb-stat-val { font-size:16px; color:#fff; line-height:1; }
+.tb-stat-lbl { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
+
+.tb-ws { display:flex; align-items:center; gap:7px; margin-left:auto; font-size:11px; color:var(--muted); }
+.ws-led { width:7px; height:7px; border-radius:50%; background:var(--muted); transition:all .3s; }
+.ws-led.on { background:var(--green); box-shadow:0 0 8px var(--green); animation:blink 2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity:.4; } }
+
+.tb-sesion-btn {
+  font-family:var(--mono); font-size:11px; letter-spacing:1px; text-transform:uppercase;
+  padding:6px 14px; border-radius:4px; cursor:pointer; border:none; transition:all .2s;
+}
+.btn-start { background:var(--green-dim); color:var(--green); border:1px solid rgba(0,255,136,.4); }
+.btn-start:hover { background:rgba(0,255,136,.2); }
+.btn-stop  { background:rgba(255,43,74,.15); color:var(--red); border:1px solid rgba(255,43,74,.4); }
+.btn-stop:hover  { background:rgba(255,43,74,.25); }
+
+/* ── LAYOUT ───────────────────────────────────────────────────────────────── */
+#main {
+  flex:1; display:grid; overflow:hidden;
+  grid-template-columns: 1fr 280px;
+  grid-template-rows: 1fr 1fr 120px;
+  gap: 1px;
+  background: var(--border);
+}
+
+.panel {
+  background: var(--panel);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  position:relative;
+}
+.panel-title {
+  padding: 8px 14px;
+  font-size: 9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+  color:var(--muted); border-bottom:1px solid var(--border);
+  flex-shrink:0;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.panel-title span { color:var(--text); font-size:11px; }
+
+/* ── CANVAS OSCILOSCOPO ───────────────────────────────────────────────────── */
+#panel-osc  { grid-column:1; grid-row:1; }
+#panel-osc2 { grid-column:1; grid-row:2; }
+
+canvas {
+  flex:1; display:block; width:100%; height:100%;
+  image-rendering: pixelated;
+}
+
+/* ── PANEL LATERAL ────────────────────────────────────────────────────────── */
+#panel-side {
+  grid-column:2; grid-row:1/4;
+  display:flex; flex-direction:column; gap:0;
+}
+
+/* ── VALORES EN TIEMPO REAL ───────────────────────────────────────────────── */
+.live-values {
+  padding:12px 14px;
+  display:grid; grid-template-columns:1fr 1fr;
+  gap: 10px;
+  border-bottom:1px solid var(--border);
+}
+.lv-card {
+  background:rgba(255,255,255,.02);
+  border:1px solid var(--border2);
+  border-radius:5px;
+  padding:8px 10px;
+  display:flex; flex-direction:column; gap:3px;
+}
+.lv-label { font-size:9px; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); }
+.lv-val   { font-size:22px; line-height:1; transition:color .15s; }
+.lv-unit  { font-size:9px; color:var(--muted); }
+.lv-x { color:var(--cx); } .lv-y { color:var(--cy); }
+.lv-z { color:var(--cz); } .lv-m { color:var(--cm); }
+
+/* ── FFT mini ──────────────────────────────────────────────────────────────── */
+#panel-fft { border-bottom:1px solid var(--border); flex-shrink:0; }
+#fft-canvas { width:100%; height:90px; display:block; }
+
+/* ── HISTORIAL SESIONES ────────────────────────────────────────────────────── */
+#panel-hist { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+.hist-list { flex:1; overflow-y:auto; padding:6px 0; }
+.hist-list::-webkit-scrollbar { width:3px; }
+.hist-list::-webkit-scrollbar-thumb { background:var(--border2); }
+
+.hist-item {
+  padding:8px 14px;
+  border-bottom:1px solid rgba(255,255,255,.03);
+  cursor:pointer; transition:background .1s;
+  display:flex; flex-direction:column; gap:2px;
+}
+.hist-item:hover { background:rgba(255,255,255,.03); }
+.hist-name { font-size:11px; color:var(--text); }
+.hist-meta { font-size:9px; color:var(--muted); display:flex; justify-content:space-between; }
+.hist-dl   {
+  font-size:9px; color:var(--green); text-decoration:none;
+  padding:1px 6px; border:1px solid rgba(0,255,136,.2); border-radius:3px;
+}
+
+/* ── BARRA INFERIOR ─────────────────────────────────────────────────────────── */
+#panel-log {
+  grid-column:1; grid-row:3;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+#log-scroll { flex:1; overflow-y:auto; padding:4px 12px; }
+#log-scroll::-webkit-scrollbar { width:2px; }
+#log-scroll::-webkit-scrollbar-thumb { background:var(--border2); }
+
+.log-line {
+  font-size:10px; line-height:1.8; color:var(--muted);
+  border-bottom:1px solid rgba(255,255,255,.02);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  animation: logIn .15s ease-out;
+}
+@keyframes logIn { from { opacity:0; } to { opacity:1; } }
+.log-ts    { color:var(--border2); margin-right:8px; }
+.log-ok    { color:var(--green); }
+.log-warn  { color:var(--yellow); }
+.log-alert { color:var(--red); }
+
+/* ── ALERTA OVERLAY ─────────────────────────────────────────────────────────── */
+#alerta-overlay {
+  display:none; position:fixed; inset:0; z-index:500;
+  background:rgba(255,43,74,.08);
+  pointer-events:none;
+  border:3px solid rgba(255,43,74,.6);
+  animation:flash .3s ease-in-out infinite alternate;
+}
+#alerta-overlay.show { display:block; }
+@keyframes flash { to { background:rgba(255,43,74,.18); } }
+
+/* ── MODAL SESION ──────────────────────────────────────────────────────────── */
+#modal-bg {
+  display:none; position:fixed; inset:0; z-index:800;
+  background:rgba(0,0,0,.7); backdrop-filter:blur(4px);
+  align-items:center; justify-content:center;
+}
+#modal-bg.open { display:flex; }
+.modal-box {
+  background:var(--panel); border:1px solid var(--border2);
+  border-radius:8px; padding:28px; width:360px;
+  display:flex; flex-direction:column; gap:14px;
+}
+.modal-box h2 { font-family:var(--sans); font-size:16px; font-weight:700; color:#fff; }
+.modal-box input {
+  background:rgba(255,255,255,.04); border:1px solid var(--border2);
+  color:var(--text); font-family:var(--mono); font-size:13px;
+  padding:10px 12px; border-radius:5px; width:100%; outline:none;
+}
+.modal-box input:focus { border-color:var(--green); }
+.modal-btns { display:flex; gap:10px; justify-content:flex-end; }
+.modal-cancel { background:none; border:1px solid var(--border2); color:var(--muted); font-family:var(--mono); font-size:11px; padding:7px 14px; border-radius:4px; cursor:pointer; }
+.modal-confirm { background:var(--green-dim); border:1px solid rgba(0,255,136,.4); color:var(--green); font-family:var(--mono); font-size:11px; padding:7px 14px; border-radius:4px; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<!-- ALERTA -->
+<div id="alerta-overlay"></div>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="tb-title">MONITOR <span>SÍSMICO</span></div>
+  <div class="tb-sep"></div>
+  <div id="nivel-badge" class="tb-badge badge-normal">NORMAL</div>
+  <div class="tb-sep"></div>
+  <div class="tb-stat"><div class="tb-stat-val" id="stat-total">0</div><div class="tb-stat-lbl">Muestras</div></div>
+  <div class="tb-stat"><div class="tb-stat-val" id="stat-hz">—</div><div class="tb-stat-lbl">Hz</div></div>
+  <div class="tb-stat"><div class="tb-stat-val" id="stat-dev">0</div><div class="tb-stat-lbl">Dispositivos</div></div>
+  <div class="tb-stat" id="sesion-info" style="display:none">
+    <div class="tb-stat-val" style="color:var(--green);font-size:13px" id="sesion-nombre">—</div>
+    <div class="tb-stat-lbl">Sesión activa</div>
+  </div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+    <button class="tb-sesion-btn btn-start" id="btn-sesion" onclick="toggleSesion()">⏺ Iniciar Sesión</button>
+    <div class="tb-ws"><div class="ws-led" id="ws-led"></div><span id="ws-lbl">Desconectado</span></div>
+  </div>
+</div>
+
+<!-- MAIN GRID -->
+<div id="main">
+  <!-- Osciloscopo X/Y -->
+  <div class="panel" id="panel-osc">
+    <div class="panel-title">
+      Acelerómetro — Ejes X / Y
+      <span id="lbl-xy">x: — &nbsp; y: —</span>
+    </div>
+    <canvas id="canvas-xy"></canvas>
+  </div>
+
+  <!-- Osciloscopo Z / Magnitud -->
+  <div class="panel" id="panel-osc2">
+    <div class="panel-title">
+      Acelerómetro — Eje Z / Magnitud
+      <span id="lbl-zm">z: — &nbsp; |v|: —</span>
+    </div>
+    <canvas id="canvas-zm"></canvas>
+  </div>
+
+  <!-- Panel lateral -->
+  <div id="panel-side">
+    <!-- Valores live -->
+    <div class="live-values">
+      <div class="lv-card"><div class="lv-label">Eje X</div><div class="lv-val lv-x" id="lv-x">—</div><div class="lv-unit">m/s²</div></div>
+      <div class="lv-card"><div class="lv-label">Eje Y</div><div class="lv-val lv-y" id="lv-y">—</div><div class="lv-unit">m/s²</div></div>
+      <div class="lv-card"><div class="lv-label">Eje Z</div><div class="lv-val lv-z" id="lv-z">—</div><div class="lv-unit">m/s²</div></div>
+      <div class="lv-card"><div class="lv-label">|Magnitud|</div><div class="lv-val lv-m" id="lv-m">—</div><div class="lv-unit">m/s²</div></div>
+    </div>
+
+    <!-- FFT aproximada -->
+    <div id="panel-fft">
+      <div class="panel-title">Espectro de frecuencias (aprox.)</div>
+      <canvas id="fft-canvas" width="280" height="90"></canvas>
+    </div>
+
+    <!-- Historial de sesiones -->
+    <div id="panel-hist">
+      <div class="panel-title">Sesiones <span id="hist-count">0</span></div>
+      <div class="hist-list" id="hist-list">
+        <div style="padding:20px 14px;font-size:10px;color:var(--muted)">Sin sesiones registradas</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="panel" id="panel-log">
+    <div class="panel-title">Registro de eventos</div>
+    <div id="log-scroll"></div>
+  </div>
+</div>
+
+<!-- Modal sesión -->
+<div id="modal-bg">
+  <div class="modal-box">
+    <h2>Nueva Sesión de Medición</h2>
+    <input id="modal-nombre" placeholder="Nombre de la sesión..." value="Edificio — Medición 1"/>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="cerrarModal()">Cancelar</button>
+      <button class="modal-confirm" onclick="confirmarSesion()">Iniciar ⏺</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN
+// ═══════════════════════════════════════════════════════════════════
+const MAX_PUNTOS = 500;   // puntos visibles en el osciloscopo
+const FFT_BINS   = 64;    // bins del espectro aproximado
+
+// ═══════════════════════════════════════════════════════════════════
+// ESTADO
+// ═══════════════════════════════════════════════════════════════════
+const buf = { x:[], y:[], z:[], m:[] };  // buffers de señal
+let sesionActiva = false;
+let sesionId     = null;
+let ws           = null;
+let reconTimer   = null;
+let animFrame    = null;
+let fftBuf       = new Float32Array(FFT_BINS).fill(0); // espectro acumulado suavizado
+
+// ═══════════════════════════════════════════════════════════════════
+// CANVAS
+// ═══════════════════════════════════════════════════════════════════
+const cvXY = document.getElementById('canvas-xy');
+const cvZM = document.getElementById('canvas-zm');
+const cvFF = document.getElementById('fft-canvas');
+const ctXY = cvXY.getContext('2d');
+const ctZM = cvZM.getContext('2d');
+const ctFF = cvFF.getContext('2d');
+
+const resizeCanvases = () => {
+  [cvXY, cvZM].forEach(cv => {
+    const r = cv.parentElement.getBoundingClientRect();
+    cv.width  = r.width  * devicePixelRatio;
+    cv.height = (r.height - 28) * devicePixelRatio; // restar título
+  });
+};
+window.addEventListener('resize', resizeCanvases);
+setTimeout(resizeCanvases, 100);
+
+// ═══════════════════════════════════════════════════════════════════
+// RENDERIZADO — OSCILOSCOPOS
+// ═══════════════════════════════════════════════════════════════════
+const COLORS = { x:'#4db8ff', y:'#00ff88', z:'#ffc940', m:'#ff7b2b' };
+
+const drawOscillo = (ctx, cv, channels, labels) => {
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Fondo con grid
+  ctx.strokeStyle = 'rgba(255,255,255,.04)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 8; i++) {
+    ctx.beginPath(); ctx.moveTo(0, H*i/8); ctx.lineTo(W, H*i/8); ctx.stroke();
+  }
+  for (let i = 1; i < 12; i++) {
+    ctx.beginPath(); ctx.moveTo(W*i/12, 0); ctx.lineTo(W*i/12, H); ctx.stroke();
+  }
+
+  // Línea central
+  ctx.strokeStyle = 'rgba(255,255,255,.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+
+  // Señales
+  channels.forEach(({ data, color }) => {
+    if (data.length < 2) return;
+    const pts = data.slice(-MAX_PUNTOS);
+    const scale = H / 2 / 15; // ±15 m/s²
+
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 1.5 * devicePixelRatio;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 4;
+
+    pts.forEach((v, i) => {
+      const px = (i / (MAX_PUNTOS - 1)) * W;
+      const py = H / 2 - v * scale;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// FFT APROXIMADA (DFT naive sobre ventana pequeña)
+// ═══════════════════════════════════════════════════════════════════
+const updateFFT = () => {
+  const signal = buf.m.slice(-256);
+  if (signal.length < 16) return;
+
+  const N = signal.length;
+  const bins = Math.min(FFT_BINS, Math.floor(N / 2));
+  const mean = signal.reduce((a,b)=>a+b,0)/N;
+
+  for (let k = 0; k < bins; k++) {
+    let re = 0, im = 0;
+    for (let n = 0; n < N; n++) {
+      const angle = 2 * Math.PI * k * n / N;
+      re += (signal[n] - mean) * Math.cos(angle);
+      im += (signal[n] - mean) * Math.sin(angle);
+    }
+    const mag = Math.sqrt(re*re + im*im) / N;
+    fftBuf[k] = fftBuf[k] * 0.8 + mag * 0.2; // suavizado exponencial
+  }
+
+  // Dibujar espectro
+  const W = cvFF.width, H = cvFF.height;
+  ctFF.clearRect(0,0,W,H);
+
+  const maxV = Math.max(...fftBuf.slice(1, bins), 0.001);
+  const bw = W / bins;
+
+  for (let k = 1; k < bins; k++) {
+    const h    = (fftBuf[k] / maxV) * (H - 4);
+    const hue  = 120 - (k / bins) * 120; // verde→rojo por frecuencia
+    ctFF.fillStyle = `hsla(${hue},100%,55%,.85)`;
+    ctFF.fillRect(k * bw, H - h, bw - 1, h);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// LOOP DE ANIMACIÓN
+// ═══════════════════════════════════════════════════════════════════
+const render = () => {
+  drawOscillo(ctXY, cvXY, [{ data: buf.x, color: COLORS.x }, { data: buf.y, color: COLORS.y }]);
+  drawOscillo(ctZM, cvZM, [{ data: buf.z, color: COLORS.z }, { data: buf.m, color: COLORS.m }]);
+  updateFFT();
+  animFrame = requestAnimationFrame(render);
+};
+render();
+
+// ═══════════════════════════════════════════════════════════════════
+// INGESTA DE MUESTRAS
+// ═══════════════════════════════════════════════════════════════════
+const ingestar = (muestras) => {
+  muestras.forEach(m => {
+    const mag = Math.sqrt(m.x*m.x + m.y*m.y + m.z*m.z);
+    buf.x.push(m.x); buf.y.push(m.y); buf.z.push(m.z); buf.m.push(mag);
+  });
+
+  // Limitar buffer
+  ['x','y','z','m'].forEach(k => { if (buf[k].length > 4000) buf[k] = buf[k].slice(-4000); });
+
+  // Valores live
+  const last = muestras[muestras.length - 1];
+  const mag  = Math.sqrt(last.x*last.x + last.y*last.y + last.z*last.z);
+  setText('lv-x', last.x.toFixed(3));
+  setText('lv-y', last.y.toFixed(3));
+  setText('lv-z', last.z.toFixed(3));
+  setText('lv-m', mag.toFixed(3));
+  setText('lbl-xy', `x: ${last.x.toFixed(2)}  y: ${last.y.toFixed(2)}`);
+  setText('lbl-zm', `z: ${last.z.toFixed(2)}  |v|: ${mag.toFixed(2)}`);
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════════════════════════════════
+const conectar = () => {
+  const url = `ws://${location.host}`;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setWs(true);
+    clearTimeout(reconTimer);
+    ws.send(JSON.stringify({ tipo: 'identificar', rol: 'dashboard' }));
+    log('Conectado al servidor', 'ok');
+  };
+
+  ws.onmessage = ({ data }) => {
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+    manejarMensaje(msg);
+  };
+
+  ws.onclose = () => {
+    setWs(false);
+    log('Conexión perdida — reintentando en 3s...', 'warn');
+    reconTimer = setTimeout(conectar, 3000);
+  };
+
+  ws.onerror = () => setWs(false);
+};
+
+const manejarMensaje = (msg) => {
+  switch (msg.tipo) {
+    case 'estado_inicial':
+      if (msg.ultimasMuestras?.length) ingestar(msg.ultimasMuestras);
+      actualizarStats(msg.stats);
+      if (msg.sesionActiva) mostrarSesionActiva(msg.sesionActiva);
+      actualizarHistorial(msg.sesiones || []);
+      log(`Estado inicial recibido — ${msg.ultimasMuestras?.length || 0} muestras previas`, 'ok');
+      break;
+
+    case 'muestras':
+      ingestar(msg.muestras);
+      actualizarStats(msg.stats);
+      if (msg.sesion) setText('sesion-total', msg.sesion.total);
+      if (msg.alertaCambio) manejarAlerta(msg.alertaCambio);
+      break;
+
+    case 'hz':
+      setText('stat-hz', msg.value);
+      break;
+
+    case 'sesion_iniciada':
+      sesionActiva = true;
+      sesionId = msg.sesion?.id;
+      mostrarSesionActiva(msg.sesion);
+      log(`Sesión iniciada: ${msg.sesion?.nombre}`, 'ok');
+      actualizarBtnSesion();
+      break;
+
+    case 'sesion_cerrada':
+      sesionActiva = false;
+      sesionId = null;
+      document.getElementById('sesion-info').style.display = 'none';
+      actualizarHistorial(msg.sesiones || []);
+      log(`Sesión cerrada: ${msg.sesion?.totalMuestras} muestras guardadas`, 'ok');
+      actualizarBtnSesion();
+      break;
+
+    case 'dispositivo_desconectado':
+      actualizarStats(msg.stats);
+      log('Dispositivo desconectado', 'warn');
+      break;
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════════════════
+const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+const setWs   = (on) => {
+  document.getElementById('ws-led').className = 'ws-led' + (on?' on':'');
+  document.getElementById('ws-lbl').textContent = on ? 'Conectado' : 'Desconectado';
+};
+
+const actualizarStats = (stats) => {
+  if (!stats) return;
+  setText('stat-total', stats.muestrasTotal?.toLocaleString());
+  setText('stat-dev',   stats.dispositivosConectados);
+  actualizarNivel(stats.nivelAlerta);
+};
+
+const NIVELES = {
+  NORMAL:     { cls:'badge-normal',     label:'NORMAL'    },
+  PRECAUCION: { cls:'badge-precaucion', label:'PRECAUCIÓN'},
+  PELIGRO:    { cls:'badge-peligro',    label:'PELIGRO'   },
+  CRITICO:    { cls:'badge-critico',    label:'⚠ CRÍTICO' },
+};
+
+const actualizarNivel = (nivel) => {
+  if (!nivel) return;
+  const badge = document.getElementById('nivel-badge');
+  badge.className = 'tb-badge ' + (NIVELES[nivel]?.cls || 'badge-normal');
+  badge.textContent = NIVELES[nivel]?.label || nivel;
+  document.getElementById('alerta-overlay').className = nivel === 'CRITICO' ? 'show' : '';
+};
+
+const manejarAlerta = (nivel) => {
+  actualizarNivel(nivel);
+  const tipos = { PRECAUCION:'warn', PELIGRO:'warn', CRITICO:'alert' };
+  log(`⚠ Nivel de alerta: ${nivel}`, tipos[nivel] || 'ok');
+};
+
+const mostrarSesionActiva = (s) => {
+  if (!s) return;
+  const el = document.getElementById('sesion-info');
+  el.style.display = 'flex';
+  setText('sesion-nombre', s.nombre);
+};
+
+const actualizarHistorial = (sesiones) => {
+  setText('hist-count', sesiones.length);
+  const list = document.getElementById('hist-list');
+  if (!sesiones.length) {
+    list.innerHTML = '<div style="padding:20px 14px;font-size:10px;color:var(--muted)">Sin sesiones registradas</div>';
+    return;
+  }
+  list.innerHTML = sesiones.map(s => {
+    const dur = s.fin
+      ? ((new Date(s.fin) - new Date(s.inicio)) / 1000).toFixed(0) + 's'
+      : '—';
+    return `<div class="hist-item">
+      <div class="hist-name">${s.nombre}</div>
+      <div class="hist-meta">
+        <span>${s.totalMuestras?.toLocaleString()} muestras · ${dur}</span>
+        <a class="hist-dl" href="/sessions/${s.id}/csv" download>CSV ↓</a>
+      </div>
+    </div>`;
+  }).join('');
+};
+
+// ── LOG ──────────────────────────────────────────────────────────────────────
+const log = (msg, tipo='') => {
+  const container = document.getElementById('log-scroll');
+  const ts = new Date().toLocaleTimeString('es-EC', { hour12:false });
+  const cls = tipo === 'ok' ? 'log-ok' : tipo === 'warn' ? 'log-warn' : tipo === 'alert' ? 'log-alert' : '';
+  const el = document.createElement('div');
+  el.className = 'log-line';
+  el.innerHTML = `<span class="log-ts">${ts}</span><span class="${cls}">${msg}</span>`;
+  container.insertBefore(el, container.firstChild);
+  while (container.children.length > 60) container.removeChild(container.lastChild);
+};
+
+// ── SESIÓN ────────────────────────────────────────────────────────────────────
+let pendienteIniciar = false;
+
+const toggleSesion = () => {
+  if (!sesionActiva) {
+    document.getElementById('modal-bg').classList.add('open');
+    setTimeout(() => document.getElementById('modal-nombre').focus(), 100);
+  } else {
+    ws?.send(JSON.stringify({ tipo: 'sesion_fin' }));
+  }
+};
+
+const cerrarModal = () => document.getElementById('modal-bg').classList.remove('open');
+
+const confirmarSesion = () => {
+  const nombre = document.getElementById('modal-nombre').value.trim() || `Sesión ${new Date().toLocaleString('es-EC')}`;
+  cerrarModal();
+  ws?.send(JSON.stringify({ tipo: 'sesion_inicio', nombre }));
+  sesionActiva = true;
+  actualizarBtnSesion();
+};
+
+const actualizarBtnSesion = () => {
+  const btn = document.getElementById('btn-sesion');
+  if (sesionActiva) {
+    btn.className = 'tb-sesion-btn btn-stop';
+    btn.textContent = '⏹ Detener Sesión';
+  } else {
+    btn.className = 'tb-sesion-btn btn-start';
+    btn.textContent = '⏺ Iniciar Sesión';
+  }
+};
+
+document.getElementById('modal-nombre').addEventListener('keydown', e => {
+  if (e.key === 'Enter') confirmarSesion();
+  if (e.key === 'Escape') cerrarModal();
+});
+
+// ── INICIO ────────────────────────────────────────────────────────────────────
+conectar();
+log('Monitor sísmico iniciado', 'ok');
+</script>
+</body>
+</html>
